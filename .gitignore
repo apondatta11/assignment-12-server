@@ -1,0 +1,4 @@
+node_modules
+.env
+.vercel
+assignment-12-client-firebase-admin-key.json
