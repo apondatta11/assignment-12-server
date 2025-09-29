@@ -477,6 +477,58 @@ async function run() {
         res.status(500).send({ message: "Failed to fetch applications" });
       }
     });
+    // PATCH: Assign agent to application (Admin only)
+app.patch("/applications/:id/assign-agent", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { agentId } = req.body;
+
+    // Verify application exists
+    const application = await applicationsCollection.findOne({
+      _id: new ObjectId(id),
+    });
+
+    if (!application) {
+      return res.status(404).send({ message: "Application not found" });
+    }
+
+    // Verify agent exists and is actually an agent
+    const agent = await usersCollection.findOne({
+      _id: new ObjectId(agentId),
+      role: "agent"
+    });
+
+    if (!agent) {
+      return res.status(404).send({ message: "Agent not found" });
+    }
+
+    const updateData = {
+      assignedAgentId: agentId,
+      assignedAgentName: agent.name,
+      assignedAgentEmail: agent.email,
+      updatedAt: new Date(),
+      // Optionally change status to under_review when agent is assigned
+      status: "under_review"
+    };
+
+    const result = await applicationsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updateData }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).send({ message: "Application not found" });
+    }
+
+    res.send({
+      message: "Agent assigned successfully",
+      application: await applicationsCollection.findOne({ _id: new ObjectId(id) })
+    });
+  } catch (error) {
+    console.error("Error assigning agent:", error);
+    res.status(500).send({ message: "Failed to assign agent" });
+  }
+});
 
     // DELETE: Delete application (Protected - user can only delete their own pending applications)
     app.delete("/applications/:id", async (req, res) => {
