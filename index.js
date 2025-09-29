@@ -53,12 +53,23 @@ const verifyToken = async (req, res, next) => {
 };
 
 // Verify Admin Middleware
-const verifyAdmin = async (req, res, next) => {
+const verifyAdmin_Merchant = async (req, res, next) => {
   const email = req.user.email;
   const query = { email: email };
   const user = await usersCollection.findOne(query);
   if (user?.role !== "admin" && user?.role !== "merchant") {
     return res.status(403).send({ message: "Forbidden access" });
+  }
+  next();
+};
+// Verify Admin Middleware
+const verifyAdmin = async (req, res, next) => {
+  const email = req.user.email;
+  const query = { email: email };
+  const user = await usersCollection.findOne(query);
+  if (user?.role !== "admin") {
+    // Changed from 'admin' or 'merchant' to just 'admin'
+    return res.status(403).send({ message: "Forbidden access - Admin only" });
   }
   next();
 };
@@ -537,6 +548,98 @@ async function run() {
       } catch (error) {
         console.error("Error fetching user:", error);
         res.status(500).send({ message: "Failed to fetch user" });
+      }
+    });
+    // GET: Get all users with filtering
+    app.get("/users", async (req, res) => {
+      try {
+        const { search, role, page = 1, limit = 10 } = req.query;
+
+        let query = {};
+
+        // Filter by role
+        if (role && role !== "all") {
+          query.role = role;
+        }
+
+        // Search by name or email
+        if (search) {
+          query.$or = [
+            { name: { $regex: search, $options: "i" } },
+            { email: { $regex: search, $options: "i" } },
+          ];
+        }
+
+        const options = {
+          sort: { createdAt: -1 },
+          skip: (parseInt(page) - 1) * parseInt(limit),
+          limit: parseInt(limit),
+        };
+
+        const users = await usersCollection.find(query, options).toArray();
+        const total = await usersCollection.countDocuments(query);
+
+        res.send({
+          users,
+          totalUsers: total,
+          currentPage: parseInt(page),
+          totalPages: Math.ceil(total / parseInt(limit)),
+        });
+      } catch (error) {
+        console.error("Error fetching users:", error);
+        res.status(500).send({ message: "Failed to fetch users" });
+      }
+    });
+
+    // PATCH: Update user role (Admin/Merchant only)
+    app.patch("/users/:userId/role", async (req, res) => {
+      try {
+        const { userId } = req.params;
+        const { role } = req.body;
+
+        // Validate role
+        if (!["admin", "agent", "customer"].includes(role)) {
+          return res.status(400).send({ message: "Invalid role" });
+        }
+
+        const result = await usersCollection.updateOne(
+          { _id: new ObjectId(userId) },
+          {
+            $set: {
+              role: role,
+              updatedAt: new Date(),
+            },
+          }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ message: "User not found" });
+        }
+
+        res.send({ message: "User role updated successfully" });
+      } catch (error) {
+        console.error("Error updating user role:", error);
+        res.status(500).send({ message: "Failed to update user role" });
+      }
+    });
+
+    // DELETE: Delete user
+    app.delete("/users/:userId", async (req, res) => {
+      try {
+        const { userId } = req.params;
+
+        const result = await usersCollection.deleteOne({
+          _id: new ObjectId(userId),
+        });
+
+        if (result.deletedCount === 0) {
+          return res.status(404).send({ message: "User not found" });
+        }
+
+        res.send({ message: "User deleted successfully" });
+      } catch (error) {
+        console.error("Error deleting user:", error);
+        res.status(500).send({ message: "Failed to delete user" });
       }
     });
 
