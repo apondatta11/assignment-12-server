@@ -289,53 +289,6 @@ async function run() {
       }
     });
 
-    // GET: Get user's applications (Protected)
-    app.get("/my-applications", async (req, res) => {
-      try {
-        const userEmail = req.user.email;
-        const { status, page = 1, limit = 10 } = req.query;
-
-        let query = { userEmail: userEmail };
-        if (status && status !== "all") {
-          query.status = status;
-        }
-
-        const options = {
-          sort: { appliedAt: -1 },
-          skip: (parseInt(page) - 1) * parseInt(limit),
-          limit: parseInt(limit),
-        };
-
-        const applications = await applicationsCollection
-          .find(query, options)
-          .toArray();
-        const total = await applicationsCollection.countDocuments(query);
-
-        // Get policy details for each application
-        const applicationsWithDetails = await Promise.all(
-          applications.map(async (app) => {
-            const policy = await policiesCollection.findOne({
-              _id: new ObjectId(app.policyId),
-            });
-            return {
-              ...app,
-              policyDetails: policy,
-            };
-          })
-        );
-
-        res.send({
-          applications: applicationsWithDetails,
-          totalApplications: total,
-          currentPage: parseInt(page),
-          totalPages: Math.ceil(total / parseInt(limit)),
-        });
-      } catch (error) {
-        console.error("Error fetching applications:", error);
-        res.status(500).send({ message: "Failed to fetch applications" });
-      }
-    });
-
     // GET: Get single application (Protected)
     app.get("/applications/:id", async (req, res) => {
       try {
@@ -365,12 +318,237 @@ async function run() {
         res.status(500).send({ message: "Failed to fetch application" });
       }
     });
+    //before assigning customers
+    // GET: Get applications (Works for both Admin and Customer)
+    // app.get("/applications", async (req, res) => {
+    //   try {
+    //     const { status, page = 1, limit = 100, search, email } = req.query;
 
-    // PUT: Update application status (Admin/Merchant only)
+    //     // Build query based on user role and email
+    //     let query = {};
+
+    //     // If email is provided, show only that user's applications (for customers)
+    //     if (email) {
+    //       query.userEmail = email;
+    //     }
+    //     // If no email provided, show all applications (for admin)
+
+    //     if (status && status !== "all") {
+    //       query.status = status;
+    //     }
+
+    //     if (search) {
+    //       query.$or = [
+    //         { fullName: { $regex: search, $options: "i" } },
+    //         { email: { $regex: search, $options: "i" } },
+    //         { applicationId: { $regex: search, $options: "i" } },
+    //       ];
+    //     }
+
+    //     // Get applications without pagination for now
+    //     const applications = await applicationsCollection
+    //       .find(query)
+    //       .sort({ appliedAt: -1 })
+    //       .toArray();
+
+    //     const total = applications.length;
+
+    //     // Get policy details and check for reviews
+    //     const applicationsWithDetails = await Promise.all(
+    //       applications.map(async (app) => {
+    //         const policy = await policiesCollection.findOne({
+    //           _id: new ObjectId(app.policyId),
+    //         });
+
+    //         // Check if user has already reviewed this policy (for customer dashboard)
+    //         const existingReview = email
+    //           ? await reviewsCollection.findOne({
+    //               userEmail: email,
+    //               policyId: app.policyId,
+    //             })
+    //           : null;
+
+    //         return {
+    //           ...app,
+    //           policyDetails: policy,
+    //           hasReview: !!existingReview, // Only for customer view
+    //         };
+    //       })
+    //     );
+
+    //     // Return different format based on whether it's admin or customer request
+    //     if (email) {
+    //       // Customer view: return simple array
+    //       res.send(applicationsWithDetails);
+    //     } else {
+    //       // Admin view: return the expected format with applications array and total
+    //       res.send({
+    //         applications: applicationsWithDetails,
+    //         totalApplications: total,
+    //         currentPage: 1,
+    //         totalPages: 1,
+    //       });
+    //     }
+    //   } catch (error) {
+    //     console.error("Error fetching applications:", error);
+    //     res.status(500).send({ message: "Failed to fetch applications" });
+    //   }
+    // });
+
+    // // PUT: Update application status (Admin/Merchant only)
+    // app.put("/applications/:id/status", async (req, res) => {
+    //   try {
+    //     const id = req.params.id;
+    //     const { status, adminNotes } = req.body;
+
+    //     if (
+    //       !status ||
+    //       !["pending", "approved", "rejected", "under_review"].includes(status)
+    //     ) {
+    //       return res.status(400).send({ message: "Invalid status" });
+    //     }
+
+    //     const application = await applicationsCollection.findOne({
+    //       _id: new ObjectId(id),
+    //     });
+
+    //     if (!application) {
+    //       return res.status(404).send({ message: "Application not found" });
+    //     }
+
+    //     const updateData = {
+    //       status: status,
+    //       updatedAt: new Date(),
+    //       reviewedBy: req.user.email,
+    //       reviewedAt: new Date(),
+    //     };
+
+    //     if (adminNotes) {
+    //       updateData.adminNotes = adminNotes;
+    //     }
+
+    //     const result = await applicationsCollection.updateOne(
+    //       { _id: new ObjectId(id) },
+    //       { $set: updateData }
+    //     );
+
+    //     res.send({
+    //       message: `Application ${status} successfully`,
+    //       application: await applicationsCollection.findOne({
+    //         _id: new ObjectId(id),
+    //       }),
+    //     });
+    //   } catch (error) {
+    //     console.error("Error updating application status:", error);
+    //     res
+    //       .status(500)
+    //       .send({ message: "Failed to update application status" });
+    //   }
+    // });
+
+    // GET: Get applications with agent filtering
+    app.get("/applications", async (req, res) => {
+      try {
+        const {
+          status,
+          page = 1,
+          limit = 100,
+          search,
+          email,
+          agentEmail,
+        } = req.query;
+
+        console.log("📋 Fetching applications with params:", {
+          status,
+          email,
+          agentEmail,
+        });
+
+        // Build query based on parameters
+        let query = {};
+
+        // If agentEmail is provided, show applications assigned to this agent
+        if (agentEmail) {
+          query.assignedAgentEmail = agentEmail;
+        }
+        // If email is provided, show only that user's applications (for customers)
+        else if (email) {
+          query.userEmail = email;
+        }
+        // If no specific filter, show all applications (for admin)
+
+        if (status && status !== "all") {
+          query.status = status;
+        }
+
+        if (search) {
+          query.$or = [
+            { fullName: { $regex: search, $options: "i" } },
+            { email: { $regex: search, $options: "i" } },
+            { applicationId: { $regex: search, $options: "i" } },
+          ];
+        }
+
+        // Get applications
+        const applications = await applicationsCollection
+          .find(query)
+          .sort({ appliedAt: -1 })
+          .toArray();
+
+        const total = applications.length;
+
+        // Get policy details
+        const applicationsWithDetails = await Promise.all(
+          applications.map(async (app) => {
+            const policy = await policiesCollection.findOne({
+              _id: new ObjectId(app.policyId),
+            });
+
+            // Check if user has already reviewed this policy (for customer dashboard)
+            const existingReview = email
+              ? await reviewsCollection.findOne({
+                  userEmail: email,
+                  policyId: app.policyId,
+                })
+              : null;
+
+            return {
+              ...app,
+              policyDetails: policy,
+              hasReview: !!existingReview, // Only for customer view
+            };
+          })
+        );
+
+        // Return format based on request type
+        if (email) {
+          // Customer view: return simple array
+          res.send(applicationsWithDetails);
+        } else if (agentEmail) {
+          // Agent view: return simple array
+          res.send(applicationsWithDetails);
+        } else {
+          // Admin view: return the expected format with applications array and total
+          res.send({
+            applications: applicationsWithDetails,
+            totalApplications: total,
+            currentPage: 1,
+            totalPages: 1,
+          });
+        }
+      } catch (error) {
+        console.error("Error fetching applications:", error);
+        res.status(500).send({ message: "Failed to fetch applications" });
+      }
+    });
+
+    // PUT: Update application status and handle purchase count
     app.put("/applications/:id/status", async (req, res) => {
       try {
         const id = req.params.id;
-        const { status, adminNotes } = req.body;
+        const { status } = req.body;
+
+        console.log(`🔄 Updating application ${id} to status: ${status}`);
 
         if (
           !status ||
@@ -390,24 +568,49 @@ async function run() {
         const updateData = {
           status: status,
           updatedAt: new Date(),
-          reviewedBy: req.user.email,
-          reviewedAt: new Date(),
         };
-
-        if (adminNotes) {
-          updateData.adminNotes = adminNotes;
-        }
 
         const result = await applicationsCollection.updateOne(
           { _id: new ObjectId(id) },
           { $set: updateData }
         );
 
+        // If status is approved, handle purchase count
+        if (status === "approved") {
+          // First, ensure the policy has a purchaseCount field
+          await policiesCollection.updateOne(
+            { _id: new ObjectId(application.policyId) },
+            {
+              $set: {
+                purchaseCount: 0,
+                popularity: 0,
+              },
+            },
+            { upsert: true }
+          );
+
+          // Then increment the purchaseCount and popularity
+          await policiesCollection.updateOne(
+            { _id: new ObjectId(application.policyId) },
+            {
+              $inc: {
+                purchaseCount: 1,
+                popularity: 1,
+              },
+            }
+          );
+          console.log(
+            `📈 Increased purchase count for policy: ${application.policyId}`
+          );
+        }
+
+        const updatedApplication = await applicationsCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
         res.send({
           message: `Application ${status} successfully`,
-          application: await applicationsCollection.findOne({
-            _id: new ObjectId(id),
-          }),
+          application: updatedApplication,
         });
       } catch (error) {
         console.error("Error updating application status:", error);
@@ -417,118 +620,60 @@ async function run() {
       }
     });
 
-    // GET: Get all applications (Admin/Merchant only)
-    app.get("/applications", async (req, res) => {
+    // PATCH: Assign agent to application (Admin only)
+    app.patch("/applications/:id/assign-agent", async (req, res) => {
       try {
-        const { status, page = 1, limit = 10, search } = req.query;
+        const id = req.params.id;
+        const { agentId } = req.body;
 
-        let query = {};
-        if (status && status !== "all") {
-          query.status = status;
+        // Verify application exists
+        const application = await applicationsCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!application) {
+          return res.status(404).send({ message: "Application not found" });
         }
 
-        if (search) {
-          query.$or = [
-            { fullName: { $regex: search, $options: "i" } },
-            { email: { $regex: search, $options: "i" } },
-            { applicationId: { $regex: search, $options: "i" } },
-          ];
+        // Verify agent exists and is actually an agent
+        const agent = await usersCollection.findOne({
+          _id: new ObjectId(agentId),
+          role: "agent",
+        });
+
+        if (!agent) {
+          return res.status(404).send({ message: "Agent not found" });
         }
 
-        const options = {
-          sort: { appliedAt: -1 },
-          skip: (parseInt(page) - 1) * parseInt(limit),
-          limit: parseInt(limit),
+        const updateData = {
+          assignedAgentId: agentId,
+          assignedAgentName: agent.name,
+          assignedAgentEmail: agent.email,
+          updatedAt: new Date(),
+          // Optionally change status to under_review when agent is assigned
+          status: "under_review",
         };
 
-        const applications = await applicationsCollection
-          .find(query, options)
-          .toArray();
-        const total = await applicationsCollection.countDocuments(query);
-
-        // Get policy details for each application
-        const applicationsWithDetails = await Promise.all(
-          applications.map(async (app) => {
-            const policy = await policiesCollection.findOne({
-              _id: new ObjectId(app.policyId),
-            });
-            const user = await usersCollection.findOne({
-              email: app.userEmail,
-            });
-            return {
-              ...app,
-              policyDetails: policy,
-              userDetails: {
-                name: user?.name,
-                role: user?.role,
-              },
-            };
-          })
+        const result = await applicationsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updateData }
         );
 
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ message: "Application not found" });
+        }
+
         res.send({
-          applications: applicationsWithDetails,
-          totalApplications: total,
-          currentPage: parseInt(page),
-          totalPages: Math.ceil(total / parseInt(limit)),
+          message: "Agent assigned successfully",
+          application: await applicationsCollection.findOne({
+            _id: new ObjectId(id),
+          }),
         });
       } catch (error) {
-        console.error("Error fetching applications:", error);
-        res.status(500).send({ message: "Failed to fetch applications" });
+        console.error("Error assigning agent:", error);
+        res.status(500).send({ message: "Failed to assign agent" });
       }
     });
-    // PATCH: Assign agent to application (Admin only)
-app.patch("/applications/:id/assign-agent", async (req, res) => {
-  try {
-    const id = req.params.id;
-    const { agentId } = req.body;
-
-    // Verify application exists
-    const application = await applicationsCollection.findOne({
-      _id: new ObjectId(id),
-    });
-
-    if (!application) {
-      return res.status(404).send({ message: "Application not found" });
-    }
-
-    // Verify agent exists and is actually an agent
-    const agent = await usersCollection.findOne({
-      _id: new ObjectId(agentId),
-      role: "agent"
-    });
-
-    if (!agent) {
-      return res.status(404).send({ message: "Agent not found" });
-    }
-
-    const updateData = {
-      assignedAgentId: agentId,
-      assignedAgentName: agent.name,
-      assignedAgentEmail: agent.email,
-      updatedAt: new Date(),
-      // Optionally change status to under_review when agent is assigned
-      status: "under_review"
-    };
-
-    const result = await applicationsCollection.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: updateData }
-    );
-
-    if (result.matchedCount === 0) {
-      return res.status(404).send({ message: "Application not found" });
-    }
-
-    res.send({
-      message: "Agent assigned successfully",
-      application: await applicationsCollection.findOne({ _id: new ObjectId(id) })
-    });
-  } catch (error) {
-    console.error("Error assigning agent:", error);
-    res.status(500).send({ message: "Failed to assign agent" });
-  }
-});
 
     // DELETE: Delete application (Protected - user can only delete their own pending applications)
     app.delete("/applications/:id", async (req, res) => {
@@ -695,6 +840,51 @@ app.patch("/applications/:id/assign-agent", async (req, res) => {
       }
     });
 
+    // POST: Submit review
+    app.post("/reviews", async (req, res) => {
+      try {
+        const userEmail = req.user.email;
+        const { policyId, rating, feedback, policyName } = req.body;
+
+        // Basic validation
+        if (!policyId || !rating || !feedback) {
+          return res.status(400).send({ message: "All fields are required" });
+        }
+
+        // Check if user has approved policy
+        const application = await applicationsCollection.findOne({
+          userEmail: userEmail,
+          policyId: policyId,
+          status: "approved",
+        });
+
+        if (!application) {
+          return res
+            .status(400)
+            .send({ message: "You can only review approved policies" });
+        }
+
+        // Save review
+        const reviewData = {
+          userEmail: userEmail,
+          policyId: policyId,
+          policyName: policyName,
+          rating: rating,
+          feedback: feedback,
+          createdAt: new Date(),
+        };
+
+        const result = await reviewsCollection.insertOne(reviewData);
+        res.send({
+          message: "Review submitted successfully",
+          reviewId: result.insertedId,
+        });
+      } catch (error) {
+        console.error("Error submitting review:", error);
+        res.status(500).send({ message: "Failed to submit review" });
+      }
+    });
+    
     // Connect the client to the server	(optional starting in v4.7)
     // await client.connect();
     // Send a ping to confirm a successful connection
