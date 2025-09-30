@@ -295,11 +295,11 @@ async function run() {
     app.get("/applications/:id", async (req, res) => {
       try {
         const id = req.params.id;
-        const userEmail = req.user.email;
+        // const userEmail = req.user.email;
 
         const application = await applicationsCollection.findOne({
           _id: new ObjectId(id),
-          userEmail: userEmail,
+        //   userEmail: userEmail,
         });
 
         if (!application) {
