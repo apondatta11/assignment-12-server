@@ -9,6 +9,8 @@ const decoded = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString(
   "utf8"
 );
 const serviceAccount = JSON.parse(decoded);
+
+const stripe = require("stripe")(process.env.PAYMENT_GATEWAY_KEY);
 // const jwt=require('jsonwebtoken')
 // const cookieParser = require('cookie-parser')
 const port = process.env.PORT || 3000;
@@ -884,7 +886,101 @@ async function run() {
         res.status(500).send({ message: "Failed to submit review" });
       }
     });
-    
+
+    // POST: Create Stripe Payment Intent
+    app.post("/create-payment-intent", async (req, res) => {
+      try {
+        const { amount, applicationId, userEmail } = req.body;
+
+        console.log(
+          "💳 Creating payment intent for:",
+          userEmail,
+          "Amount:",
+          amount
+        );
+
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount: Math.round(amount * 100), // Convert to cents
+          currency: "usd",
+          payment_method_types: ["card"],
+          metadata: {
+            applicationId: applicationId,
+            userEmail: userEmail,
+          },
+        });
+
+        res.send({
+          clientSecret: paymentIntent.client_secret,
+        });
+      } catch (error) {
+        console.error("Error creating payment intent:", error);
+        res.status(500).send({ message: "Failed to create payment intent" });
+      }
+    });
+
+    // POST: Record payment and update application
+    app.post("/payments", async (req, res) => {
+      try {
+        const { applicationId, userEmail, amount, transactionId } = req.body;
+
+        // 1. Update application payment status
+        const updateResult = await applicationsCollection.updateOne(
+          { _id: new ObjectId(applicationId) },
+          {
+            $set: {
+              paymentStatus: "paid", // Add this field
+              lastPaymentDate: new Date(),
+              nextDueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+            },
+          }
+        );
+
+        if (updateResult.modifiedCount === 0) {
+          return res.status(404).send({ message: "Application not found" });
+        }
+
+        // 2. Insert payment record
+        const paymentData = {
+          applicationId,
+          userEmail,
+          amount,
+          transactionId,
+          paymentDate: new Date(),
+          status: "completed",
+        };
+
+        const paymentResult = await paymentsCollection.insertOne(paymentData);
+
+        res.send({
+          message: "Payment recorded successfully",
+          paymentId: paymentResult.insertedId,
+        });
+      } catch (error) {
+        console.error("Payment processing failed:", error);
+        res.status(500).send({ message: "Failed to record payment" });
+      }
+    });
+    // GET: Check payments for an application
+    app.get("/payments", async (req, res) => {
+      try {
+        const { applicationId, userEmail } = req.query;
+        let query = {};
+
+        if (applicationId) {
+          query.applicationId = applicationId;
+        }
+
+        if (userEmail) {
+          query.userEmail = userEmail;
+        }
+
+        const payments = await paymentsCollection.find(query).toArray();
+        res.send(payments);
+      } catch (error) {
+        console.error("Error fetching payments:", error);
+        res.status(500).send({ message: "Failed to fetch payments" });
+      }
+    });
     // Connect the client to the server	(optional starting in v4.7)
     // await client.connect();
     // Send a ping to confirm a successful connection
