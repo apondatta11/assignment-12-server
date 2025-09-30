@@ -1171,6 +1171,142 @@ async function run() {
         });
       }
     });
+
+    app.post("/blogs", async (req, res) => {
+      try {
+        const { title, content, author, category } = req.body;
+        console.log("📝 POST /blogs - Data:", {
+          title,
+          content,
+          author,
+          category,
+        });
+
+        if (!title || !content || !author) {
+          return res
+            .status(400)
+            .send({ message: "Title, content, and author are required" });
+        }
+
+        const blogData = {
+          title,
+          content,
+          author,
+          category: category || "insurance-tips",
+          publishDate: new Date(),
+          totalVisits: 0,
+          status: "published",
+        };
+
+        console.log("💾 Saving blog to database:", blogData);
+        const result = await blogsCollection.insertOne(blogData);
+        console.log("✅ Blog saved with ID:", result.insertedId);
+
+        res.send({
+          message: "Blog published successfully",
+          blogId: result.insertedId,
+          blog: blogData,
+        });
+      } catch (error) {
+        console.error("❌ Error creating blog:", error);
+        res.status(500).send({
+          message: "Failed to publish blog",
+          error: error.message,
+        });
+      }
+    });
+
+    // GET /blogs - Get all blogs for admin, or user's blogs for agents
+    app.get("/blogs", async (req, res) => {
+      try {
+        const { author } = req.query;
+        console.log("📝 GET /blogs - Author query:", author);
+
+        let query = {};
+
+        // If author query is provided, filter by author
+        if (author) {
+          query.author = author;
+        }
+        // Note: Removed admin check for now to simplify
+
+        const blogs = await blogsCollection
+          .find(query)
+          .sort({ publishDate: -1 })
+          .toArray();
+
+        console.log("✅ Found blogs:", blogs.length);
+        res.send(blogs);
+      } catch (error) {
+        console.error("❌ Error fetching blogs:", error);
+        res.status(500).send({
+          message: "Failed to fetch blogs",
+          error: error.message,
+        });
+      }
+    });
+
+    // PATCH /blogs/:id - Update blog
+    app.patch("/blogs/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { title, content, category } = req.body;
+
+        const result = await blogsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              title,
+              content,
+              category,
+              lastUpdated: new Date(),
+            },
+          }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ message: "Blog not found" });
+        }
+
+        res.send({
+          message: "Blog updated successfully",
+          blogId: id,
+        });
+      } catch (error) {
+        console.error("❌ Error updating blog:", error);
+        res.status(500).send({
+          message: "Failed to update blog",
+          error: error.message,
+        });
+      }
+    });
+
+    // DELETE /blogs/:id - Delete blog
+    app.delete("/blogs/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        const result = await blogsCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+
+        if (result.deletedCount === 0) {
+          return res.status(404).send({ message: "Blog not found" });
+        }
+
+        res.send({
+          message: "Blog deleted successfully",
+          blogId: id,
+        });
+      } catch (error) {
+        console.error("❌ Error deleting blog:", error);
+        res.status(500).send({
+          message: "Failed to delete blog",
+          error: error.message,
+        });
+      }
+    });
+
     // Connect the client to the server	(optional starting in v4.7)
     // await client.connect();
     // Send a ping to confirm a successful connection
@@ -1179,8 +1315,8 @@ async function run() {
       "Pinged your deployment. You successfully connected to MongoDB!"
     );
   } finally {
-    //         // Ensures that the client will close when you finish/error
-    //         // await client.close();
+    // Ensures that the client will close when you finish/error
+    // await client.close();
   }
 }
 run().catch(console.dir);
