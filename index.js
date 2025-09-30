@@ -2,6 +2,9 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const app = express();
+const fs = require("fs");
+const multer = require("multer");
+const path = require("path");
 
 const admin = require("firebase-admin");
 
@@ -22,6 +25,7 @@ app.use(cors());
 //     credentials: true
 // }));
 app.use(express.json());
+app.use("/uploads", express.static("uploads"));
 // app.use(cookieParser());
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@cluster0.yp67wht.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
@@ -36,6 +40,42 @@ const client = new MongoClient(uri, {
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
+});
+
+// Configure multer for file uploads
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, "uploads/"); // Create this folder in your project root
+  },
+  filename: function (req, file, cb) {
+    // Generate unique filename
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    cb(
+      null,
+      file.fieldname + "-" + uniqueSuffix + path.extname(file.originalname)
+    );
+  },
+});
+
+const upload = multer({
+  storage: storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB limit
+  },
+  fileFilter: function (req, file, cb) {
+    // Check file types
+    const allowedTypes = /jpeg|jpg|png|pdf/;
+    const extname = allowedTypes.test(
+      path.extname(file.originalname).toLowerCase()
+    );
+    const mimetype = allowedTypes.test(file.mimetype);
+
+    if (mimetype && extname) {
+      return cb(null, true);
+    } else {
+      cb(new Error("Only PDF, JPEG, JPG, and PNG files are allowed"));
+    }
+  },
 });
 
 // Verify Token Middleware
@@ -299,7 +339,7 @@ async function run() {
 
         const application = await applicationsCollection.findOne({
           _id: new ObjectId(id),
-        //   userEmail: userEmail,
+          //   userEmail: userEmail,
         });
 
         if (!application) {
@@ -900,7 +940,7 @@ async function run() {
         );
 
         const paymentIntent = await stripe.paymentIntents.create({
-          amount: Math.round(amount * 100), 
+          amount: Math.round(amount * 100),
           currency: "usd",
           payment_method_types: ["card"],
           metadata: {
@@ -979,6 +1019,156 @@ async function run() {
       } catch (error) {
         console.error("Error fetching payments:", error);
         res.status(500).send({ message: "Failed to fetch payments" });
+      }
+    });
+
+    // POST: Submit a claim (without auth for testing)
+    // POST: Submit claim with file upload
+    app.post("/claims", upload.single("document"), async (req, res) => {
+      try {
+        const { applicationId, policyName, reason, userEmail } = req.body;
+        const documentFile = req.file;
+
+        console.log(
+          "📝 Submitting claim for:",
+          userEmail,
+          "Application:",
+          applicationId
+        );
+
+        // Validate required fields
+        if (!applicationId || !policyName || !reason || !userEmail) {
+          if (documentFile) {
+            fs.unlinkSync(documentFile.path);
+          }
+          return res.status(400).send({ message: "All fields are required" });
+        }
+
+        if (!documentFile) {
+          return res.status(400).send({ message: "Document file is required" });
+        }
+
+        console.log("📁 Uploaded file:", documentFile);
+
+        // Check if claim already exists for this application
+        const existingClaim = await claimsCollection.findOne({
+          applicationId: applicationId,
+          userEmail: userEmail,
+        });
+
+        if (existingClaim) {
+          // Delete the uploaded file if claim already exists
+          fs.unlinkSync(documentFile.path);
+          return res
+            .status(400)
+            .send({ message: "Claim already submitted for this policy" });
+        }
+
+        const claimData = {
+          applicationId,
+          policyName,
+          reason,
+          documentUrl: `/uploads/${documentFile.filename}`,
+          originalFileName: documentFile.originalname,
+          fileSize: documentFile.size,
+          fileType: documentFile.mimetype,
+          userEmail,
+          status: "pending",
+          submittedAt: new Date(),
+        };
+
+        console.log("✅ Creating new claim:", claimData);
+
+        const result = await claimsCollection.insertOne(claimData);
+
+        res.send({
+          message: "Claim submitted successfully",
+          claimId: result.insertedId,
+          claim: claimData,
+        });
+      } catch (error) {
+        console.error("❌ Error submitting claim:", error);
+
+        // Delete uploaded file if error occurs
+        if (req.file) {
+          try {
+            fs.unlinkSync(req.file.path);
+          } catch (unlinkError) {
+            console.error("Error deleting file:", unlinkError);
+          }
+        }
+
+        res.status(500).send({
+          message: "Failed to submit claim",
+          error: error.message,
+        });
+      }
+    });
+
+    app.get("/claims", async (req, res) => {
+      try {
+        const userEmail = req.query.email; // Get email from query parameter
+
+        console.log(
+          "📋 Fetching claims:",
+          userEmail ? `for user ${userEmail}` : "all claims"
+        );
+
+        let query = {};
+        if (userEmail) {
+          query.userEmail = userEmail;
+        }
+
+        const claims = await claimsCollection
+          .find(query)
+          .sort({ submittedAt: -1 })
+          .toArray();
+
+        console.log("✅ Found claims:", claims.length);
+
+        res.send(claims);
+      } catch (error) {
+        console.error("❌ Error fetching claims:", error);
+        res.status(500).send({
+          message: "Failed to fetch claims",
+          error: error.message,
+        });
+      }
+    });
+
+    app.patch("/claims/:claimId/approve", async (req, res) => {
+      try {
+        const { claimId } = req.params;
+
+        console.log("✅ Approving claim:", claimId);
+
+        const result = await claimsCollection.updateOne(
+          { _id: new ObjectId(claimId) },
+          {
+            $set: {
+              status: "approved",
+              approvedAt: new Date(),
+              approvedBy: req.user?.email || "agent",
+            },
+          }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ message: "Claim not found" });
+        }
+
+        console.log("✅ Claim approved successfully");
+
+        res.send({
+          message: "Claim approved successfully",
+          claimId: claimId,
+        });
+      } catch (error) {
+        console.error("❌ Error approving claim:", error);
+        res.status(500).send({
+          message: "Failed to approve claim",
+          error: error.message,
+        });
       }
     });
     // Connect the client to the server	(optional starting in v4.7)
